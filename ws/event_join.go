@@ -2,8 +2,6 @@ package ws
 
 import (
 	"fmt"
-
-	"github.com/screego/server/util"
 )
 
 func init() {
@@ -15,11 +13,10 @@ func init() {
 type Join struct {
 	ID       string `json:"id"`
 	UserName string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
 }
 
 func (e *Join) Execute(rooms *Rooms, current ClientInfo) error {
-	if current.RoomID != "" {
+	if rooms.connected[current.ID] != "" {
 		return fmt.Errorf("cannot join room, you are already in one")
 	}
 
@@ -32,7 +29,7 @@ func (e *Join) Execute(rooms *Rooms, current ClientInfo) error {
 		name = current.AuthenticatedUser
 	}
 	if name == "" {
-		name = util.NewName()
+		name = rooms.RandUserName()
 	}
 
 	room.Users[current.ID] = &User{
@@ -41,17 +38,22 @@ func (e *Join) Execute(rooms *Rooms, current ClientInfo) error {
 		Streaming: false,
 		Owner:     false,
 		Addr:      current.Addr,
-		Write:     current.Write,
-		Close:     current.Close,
+		_write:    current.Write,
 	}
+	rooms.connected[current.ID] = room.ID
 	room.notifyInfoChanged()
 	usersJoinedTotal.Inc()
+
+	v4, v6, err := rooms.config.TurnIPProvider.Get()
+	if err != nil {
+		return err
+	}
 
 	for _, user := range room.Users {
 		if current.ID == user.ID || !user.Streaming {
 			continue
 		}
-		room.newSession(user.ID, current.ID, rooms)
+		room.newSession(user.ID, current.ID, rooms, v4, v6)
 	}
 
 	return nil

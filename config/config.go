@@ -14,6 +14,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/rs/zerolog"
+	"github.com/screego/server/config/ipdns"
 	"github.com/screego/server/config/mode"
 )
 
@@ -40,13 +41,13 @@ type Config struct {
 	TLSCertFile string `split_words:"true"`
 	TLSKeyFile  string `split_words:"true"`
 
-	ServerTLS     bool   `split_words:"true"`
-	ServerAddress string `default:":5050" split_words:"true"`
-	Secret        []byte `split_words:"true"`
+	ServerTLS             bool   `split_words:"true"`
+	ServerAddress         string `default:":5050" split_words:"true"`
+	Secret                []byte `split_words:"true"`
+	SessionTimeoutSeconds int    `default:"0" split_words:"true"`
 
-	TurnAddress    string `default:":3478" required:"true" split_words:"true"`
-	TurnStrictAuth bool   `default:"true" split_words:"true"`
-	TurnPortRange  string `split_words:"true"`
+	TurnAddress   string `default:":3478" required:"true" split_words:"true"`
+	TurnPortRange string `split_words:"true"`
 
 	TurnExternalIP     []string `split_words:"true"`
 	TurnExternalPort   string   `default:"3478" split_words:"true"`
@@ -58,11 +59,13 @@ type Config struct {
 	UsersFile          string   `split_words:"true"`
 	Prometheus         bool     `split_words:"true"`
 
-	CheckOrigin  func(string) bool `ignored:"true" json:"-"`
-	TurnExternal bool              `ignored:"true"`
-	TurnIPV4     net.IP            `ignored:"true"`
-	TurnIPV6     net.IP            `ignored:"true"`
-	TurnPort     string            `ignored:"true"`
+	CheckOrigin    func(string) bool `ignored:"true" json:"-"`
+	TurnExternal   bool              `ignored:"true"`
+	TurnIPProvider ipdns.Provider    `ignored:"true"`
+	TurnPort       string            `ignored:"true"`
+
+	TurnDenyPeers       []string     `default:"0.0.0.0/8,127.0.0.1/8,::/128,::1/128,fe80::/10" split_words:"true"`
+	TurnDenyPeersParsed []*net.IPNet `ignored:"true"`
 
 	CloseRoomWhenOwnerLeaves bool `default:"true" split_words:"true"`
 }
@@ -111,14 +114,16 @@ func Get() (Config, []FutureLog) {
 			} else {
 				logs = append(logs, FutureLog{
 					Level: zerolog.DebugLevel,
-					Msg:   fmt.Sprintf("Loading file %s", file)})
+					Msg:   fmt.Sprintf("Loading file %s", file),
+				})
 			}
 		} else if os.IsNotExist(fileErr) {
 			continue
 		} else {
 			logs = append(logs, FutureLog{
 				Level: zerolog.WarnLevel,
-				Msg:   fmt.Sprintf("cannot read file %s because %s", file, fileErr)})
+				Msg:   fmt.Sprintf("cannot read file %s because %s", file, fileErr),
+			})
 		}
 	}
 
@@ -170,7 +175,8 @@ func Get() (Config, []FutureLog) {
 		if _, err := rand.Read(config.Secret); err == nil {
 			logs = append(logs, FutureLog{
 				Level: zerolog.InfoLevel,
-				Msg:   "SCREEGO_SECRET unset, user logins will be invalidated on restart"})
+				Msg:   "SCREEGO_SECRET unset, user logins will be invalidated on restart",
+			})
 		} else {
 			logs = append(logs, futureFatal(fmt.Sprintf("cannot create secret %s", err)))
 		}
@@ -183,7 +189,7 @@ func Get() (Config, []FutureLog) {
 			logs = append(logs, futureFatal("SCREEGO_EXTERNAL_IP and SCREEGO_TURN_EXTERNAL_IP must not be both set"))
 		}
 
-		config.TurnIPV4, config.TurnIPV6, errs = validateExternalIP(config.TurnExternalIP, "SCREEGO_TURN_EXTERNAL_IP")
+		config.TurnIPProvider, errs = parseIPProvider(config.TurnExternalIP, "SCREEGO_TURN_EXTERNAL_IP")
 		config.TurnPort = config.TurnExternalPort
 		config.TurnExternal = true
 		logs = append(logs, errs...)
@@ -191,7 +197,7 @@ func Get() (Config, []FutureLog) {
 			logs = append(logs, futureFatal("SCREEGO_TURN_EXTERNAL_SECRET must be set if external TURN server is used"))
 		}
 	} else if len(config.ExternalIP) > 0 {
-		config.TurnIPV4, config.TurnIPV6, errs = validateExternalIP(config.ExternalIP, "SCREEGO_EXTERNAL_IP")
+		config.TurnIPProvider, errs = parseIPProvider(config.ExternalIP, "SCREEGO_EXTERNAL_IP")
 		logs = append(logs, errs...)
 		split := strings.Split(config.TurnAddress, ":")
 		config.TurnPort = split[len(split)-1]
@@ -211,54 +217,35 @@ func Get() (Config, []FutureLog) {
 	} else if (max - min) < 40 {
 		logs = append(logs, FutureLog{
 			Level: zerolog.WarnLevel,
-			Msg:   "Less than 40 ports are available for turn. When using multiple TURN connections this may not be enough"})
+			Msg:   "Less than 40 ports are available for turn. When using multiple TURN connections this may not be enough",
+		})
 	}
+	logs = append(logs, logDeprecated()...)
+
+	for _, cidrString := range config.TurnDenyPeers {
+		_, cidr, err := net.ParseCIDR(cidrString)
+		if err != nil {
+			logs = append(logs, FutureLog{
+				Level: zerolog.FatalLevel,
+				Msg:   fmt.Sprintf("Invalid SCREEGO_TURN_DENY_PEERS %q: %s", cidrString, err),
+			})
+		} else {
+			config.TurnDenyPeersParsed = append(config.TurnDenyPeersParsed, cidr)
+		}
+	}
+	logs = append(logs, FutureLog{
+		Level: zerolog.InfoLevel,
+		Msg:   fmt.Sprintf("Deny turn peers within %q", config.TurnDenyPeersParsed),
+	})
 
 	return config, logs
 }
 
-func validateExternalIP(ips []string, config string) (net.IP, net.IP, []FutureLog) {
-	if len(ips) == 0 {
-		return nil, nil, nil
+func logDeprecated() []FutureLog {
+	if os.Getenv("SCREEGO_TURN_STRICT_AUTH") != "" {
+		return []FutureLog{{Level: zerolog.WarnLevel, Msg: "The setting SCREEGO_TURN_STRICT_AUTH has been removed."}}
 	}
-
-	first := ips[0]
-
-	firstParsed := net.ParseIP(first)
-	if firstParsed == nil || first == "0.0.0.0" {
-		return nil, nil, []FutureLog{futureFatal(fmt.Sprintf("invalid %s: %s", config, first))}
-	}
-	firstIsIP4 := firstParsed.To4() != nil
-
-	if len(ips) == 1 {
-		if firstIsIP4 {
-			return firstParsed, nil, nil
-		}
-		return nil, firstParsed, nil
-	}
-
-	second := ips[1]
-
-	secondParsed := net.ParseIP(second)
-	if secondParsed == nil || second == "0.0.0.0" {
-		return nil, nil, []FutureLog{futureFatal(fmt.Sprintf("invalid %s: %s", config, second))}
-	}
-
-	secondIsIP4 := secondParsed.To4() != nil
-
-	if firstIsIP4 == secondIsIP4 {
-		return nil, nil, []FutureLog{futureFatal(fmt.Sprintf("invalid %s: the ips must be of different type ipv4/ipv6", config))}
-	}
-
-	if len(ips) > 2 {
-		return nil, nil, []FutureLog{futureFatal(fmt.Sprintf("invalid %s: too many ips supplied", config))}
-	}
-
-	if !firstIsIP4 {
-		return secondParsed, firstParsed, nil
-	}
-
-	return firstParsed, secondParsed, nil
+	return nil
 }
 
 func getExecutableOrWorkDir() (string, *FutureLog) {
@@ -276,7 +263,8 @@ func getExecutableDir() (string, *FutureLog) {
 	if err != nil {
 		return "", &FutureLog{
 			Level: zerolog.ErrorLevel,
-			Msg:   "Could not get path of executable using working directory instead. " + err.Error()}
+			Msg:   "Could not get path of executable using working directory instead. " + err.Error(),
+		}
 	}
 	return filepath.Dir(ex), nil
 }

@@ -1,34 +1,20 @@
-import React from 'react';
-import {setPermanentName} from './name';
-import {
-    Badge,
-    Button,
-    Checkbox,
-    Dialog,
-    DialogActions,
-    DialogContent,
-    DialogTitle,
-    FormControlLabel,
-    IconButton,
-    Menu,
-    MenuItem,
-    Paper,
-    TextField,
-    Theme,
-    Tooltip,
-    Typography,
-} from '@material-ui/core';
-import CancelPresentationIcon from '@material-ui/icons/CancelPresentation';
-import PresentToAllIcon from '@material-ui/icons/PresentToAll';
-import FullScreenIcon from '@material-ui/icons/Fullscreen';
-import PeopleIcon from '@material-ui/icons/People';
-import ShowMoreIcon from '@material-ui/icons/MoreVert';
+import React, {useCallback} from 'react';
+import {Badge, Box, IconButton, Paper, Tooltip, Typography, Slider, Stack} from '@mui/material';
+import CancelPresentationIcon from '@mui/icons-material/CancelPresentation';
+import PresentToAllIcon from '@mui/icons-material/PresentToAll';
+import FullScreenIcon from '@mui/icons-material/Fullscreen';
+import PeopleIcon from '@mui/icons-material/People';
+import VolumeMuteIcon from '@mui/icons-material/VolumeOff';
+import VolumeIcon from '@mui/icons-material/VolumeUp';
+import SettingsIcon from '@mui/icons-material/Settings';
 import {useHotkeys} from 'react-hotkeys-hook';
 import {Video} from './Video';
-import {makeStyles} from '@material-ui/core/styles';
+import {makeStyles} from 'tss-react/mui';
 import {ConnectedRoom} from './useRoom';
 import {useSnackbar} from 'notistack';
 import {RoomUser} from './message';
+import {useSettings, VideoDisplayMode} from './settings';
+import {SettingDialog} from './SettingDialog';
 
 const HostStream: unique symbol = Symbol('mystream');
 
@@ -49,23 +35,21 @@ const flags = (user: RoomUser) => {
     return ` (${result.join(', ')})`;
 };
 
-enum VideoDisplayMode {
-    FitToWindow = 'FitToWindow',
-    FitWidth = 'FitWidth',
-    FitHeight = 'FitHeight',
-    OriginalSize = 'OriginalSize',
+interface FullScreenHTMLVideoElement extends HTMLVideoElement {
+    msRequestFullscreen?: () => void;
+    mozRequestFullScreen?: () => void;
+    webkitRequestFullscreen?: () => void;
 }
 
-const defaultVideoDisplayMode = (): VideoDisplayMode => {
-    switch (localStorage.getItem('videoDisplayMode')) {
-        case 'FitWidth':
-            return VideoDisplayMode.FitWidth;
-        case 'FitHeight':
-            return VideoDisplayMode.FitHeight;
-        case 'OriginalSize':
-            return VideoDisplayMode.OriginalSize;
-        default:
-            return VideoDisplayMode.FitToWindow;
+const requestFullscreen = (element: FullScreenHTMLVideoElement | null) => {
+    if (element?.requestFullscreen) {
+        element.requestFullscreen();
+    } else if (element?.mozRequestFullScreen) {
+        element.mozRequestFullScreen();
+    } else if (element?.msRequestFullscreen) {
+        element.msRequestFullscreen();
+    } else if (element?.webkitRequestFullscreen) {
+        element.webkitRequestFullscreen();
     }
 };
 
@@ -80,27 +64,18 @@ export const Room = ({
     stopShare: () => void;
     setName: (name: string) => void;
 }) => {
-    const classes = useStyles();
+    const {classes} = useStyles();
     const [open, setOpen] = React.useState(false);
     const {enqueueSnackbar} = useSnackbar();
-    const [nameInput, setNameInput] = React.useState('');
-    const [permanent, setPermanent] = React.useState(false);
+    const [settings, setSettings] = useSettings();
     const [showControl, setShowControl] = React.useState(true);
     const [hoverControl, setHoverControl] = React.useState(false);
-    const [showMore, setShowMore] = React.useState<Element>();
-    const [showDisplayOptions, setShowDisplayOptions] = React.useState<Element>();
     const [selectedStream, setSelectedStream] = React.useState<string | typeof HostStream>();
-    const [videoElement, setVideoElement] = React.useState<HTMLVideoElement | null>(null);
-    const [videoDisplayMode, setVideoDisplayMode] = React.useState<VideoDisplayMode>(
-        defaultVideoDisplayMode()
-    );
-
-    React.useEffect(
-        () => localStorage.setItem('videoDisplayMode', videoDisplayMode),
-        [videoDisplayMode]
-    );
+    const [videoElement, setVideoElement] = React.useState<FullScreenHTMLVideoElement | null>(null);
 
     useShowOnMouseMovement(setShowControl);
+
+    const handleFullscreen = useCallback(() => requestFullscreen(videoElement), [videoElement]);
 
     React.useEffect(() => {
         if (selectedStream === HostStream && state.hostStream) {
@@ -121,18 +96,20 @@ export const Room = ({
             ? state.hostStream
             : state.clientStreams.find(({id}) => selectedStream === id)?.stream;
 
-    const submitName = () => {
-        if (permanent) {
-            setPermanentName(nameInput);
-        }
-        setName(nameInput);
-        setOpen(false);
-    };
-
     React.useEffect(() => {
         if (videoElement && stream) {
             videoElement.srcObject = stream;
-            videoElement.play();
+            videoElement.play().catch((err) => {
+                console.log('Could not play main video', err);
+                if (err.name === 'NotAllowedError') {
+                    videoElement.muted = true;
+                    videoElement
+                        .play()
+                        .catch((retryErr) =>
+                            console.log('Could not play main video with mute', retryErr)
+                        );
+                }
+            });
         }
     }, [videoElement, stream]);
 
@@ -151,17 +128,17 @@ export const Room = ({
         [setHoverControl]
     );
 
-    const controlVisible = showControl || open || showMore || hoverControl;
+    const controlVisible = showControl || open || hoverControl;
 
     useHotkeys('s', () => (state.hostStream ? stopShare() : share()), [state.hostStream]);
     useHotkeys(
         'f',
         () => {
             if (selectedStream) {
-                videoElement?.requestFullscreen();
+                handleFullscreen();
             }
         },
-        [videoElement, selectedStream]
+        [handleFullscreen, selectedStream]
     );
     useHotkeys('c', copyLink);
     useHotkeys(
@@ -196,9 +173,18 @@ export const Room = ({
         },
         [state.clientStreams, selectedStream]
     );
+    useHotkeys(
+        'm',
+        () => {
+            if (videoElement) {
+                videoElement.muted = !videoElement.muted;
+            }
+        },
+        [videoElement]
+    );
 
     const videoClasses = () => {
-        switch (videoDisplayMode) {
+        switch (settings.displayMode) {
             case VideoDisplayMode.FitToWindow:
                 return `${classes.video} ${classes.videoWindowFit}`;
             case VideoDisplayMode.OriginalSize:
@@ -219,7 +205,8 @@ export const Room = ({
                             variant="h4"
                             component="h4"
                             style={{cursor: 'pointer'}}
-                            onClick={copyLink}>
+                            onClick={copyLink}
+                        >
                             {state.id}
                         </Typography>
                     </Tooltip>
@@ -227,7 +214,11 @@ export const Room = ({
             )}
 
             {stream ? (
-                <video muted ref={setVideoElement} className={videoClasses()} />
+                <video
+                    ref={setVideoElement}
+                    className={videoClasses()}
+                    onDoubleClick={handleFullscreen}
+                />
             ) : (
                 <Typography
                     variant="h4"
@@ -238,117 +229,66 @@ export const Room = ({
                         left: '50%',
                         position: 'absolute',
                         transform: 'translate(-50%, -50%)',
-                    }}>
+                    }}
+                >
                     no stream available
                 </Typography>
             )}
 
             {controlVisible && (
                 <Paper className={classes.control} elevation={10} {...setHoverState}>
-                    {state.hostStream ? (
-                        <Tooltip title="Cancel Presentation" arrow>
-                            <IconButton onClick={stopShare}>
-                                <CancelPresentationIcon fontSize="large" />
-                            </IconButton>
-                        </Tooltip>
-                    ) : (
-                        <Tooltip title="Start Presentation" arrow>
-                            <IconButton onClick={share}>
-                                <PresentToAllIcon fontSize="large" />
-                            </IconButton>
-                        </Tooltip>
+                    {(stream?.getAudioTracks().length ?? 0) > 0 && videoElement && (
+                        <AudioControl video={videoElement} />
                     )}
+                    <Box sx={{whiteSpace: 'nowrap'}}>
+                        {state.hostStream ? (
+                            <Tooltip title="Cancel Presentation" arrow>
+                                <IconButton onClick={stopShare} size="large">
+                                    <CancelPresentationIcon fontSize="large" />
+                                </IconButton>
+                            </Tooltip>
+                        ) : (
+                            <Tooltip title="Start Presentation" arrow>
+                                <IconButton onClick={share} size="large">
+                                    <PresentToAllIcon fontSize="large" />
+                                </IconButton>
+                            </Tooltip>
+                        )}
 
-                    <Tooltip
-                        classes={{tooltip: classes.noMaxWidth}}
-                        title={
-                            <div>
-                                <Typography variant="h5">Member List</Typography>
-                                {state.users.map((user) => (
-                                    <Typography key={user.id}>
-                                        {user.name} {flags(user)}
-                                    </Typography>
-                                ))}
-                            </div>
-                        }
-                        arrow>
-                        <Badge badgeContent={state.users.length} color="primary">
-                            <PeopleIcon fontSize="large" />
-                        </Badge>
-                    </Tooltip>
-                    <Tooltip title="Fullscreen" arrow>
-                        <span>
+                        <Tooltip
+                            classes={{tooltip: classes.noMaxWidth}}
+                            title={
+                                <div>
+                                    <Typography variant="h5">Member List</Typography>
+                                    {state.users.map((user) => (
+                                        <Typography key={user.id}>
+                                            {user.name} {flags(user)}
+                                        </Typography>
+                                    ))}
+                                </div>
+                            }
+                            arrow
+                        >
+                            <Badge badgeContent={state.users.length} color="primary">
+                                <PeopleIcon fontSize="large" />
+                            </Badge>
+                        </Tooltip>
+                        <Tooltip title="Fullscreen" arrow>
                             <IconButton
-                                onClick={() => videoElement?.requestFullscreen()}
-                                disabled={!selectedStream}>
+                                onClick={() => handleFullscreen()}
+                                disabled={!selectedStream}
+                                size="large"
+                            >
                                 <FullScreenIcon fontSize="large" />
                             </IconButton>
-                        </span>
-                    </Tooltip>
+                        </Tooltip>
 
-                    <Tooltip title="More" arrow>
-                        <IconButton onClick={(e) => setShowMore(e.currentTarget)}>
-                            <ShowMoreIcon fontSize="large" />
-                        </IconButton>
-                    </Tooltip>
-
-                    <Menu
-                        anchorEl={showMore}
-                        keepMounted
-                        open={Boolean(showMore)}
-                        onClose={() => setShowMore(undefined)}>
-                        <MenuItem onClick={(e) => setShowDisplayOptions(e.currentTarget)}>
-                            Display Mode
-                        </MenuItem>
-
-                        <MenuItem
-                            onClick={() => {
-                                setShowMore(undefined);
-                                setOpen(true);
-                            }}>
-                            Change Name
-                        </MenuItem>
-                    </Menu>
-
-                    <Menu
-                        anchorEl={showDisplayOptions}
-                        keepMounted
-                        open={Boolean(showDisplayOptions)}
-                        onClose={() => setShowDisplayOptions(undefined)}
-                        anchorOrigin={{horizontal: 'right', vertical: 'center'}}>
-                        <MenuItem
-                            onClick={() => {
-                                setVideoDisplayMode(VideoDisplayMode.FitToWindow);
-                                setShowDisplayOptions(undefined);
-                                setShowMore(undefined);
-                            }}>
-                            Fit to window
-                        </MenuItem>
-                        <MenuItem
-                            onClick={() => {
-                                setVideoDisplayMode(VideoDisplayMode.FitWidth);
-                                setShowDisplayOptions(undefined);
-                                setShowMore(undefined);
-                            }}>
-                            Fit width
-                        </MenuItem>
-                        <MenuItem
-                            onClick={() => {
-                                setVideoDisplayMode(VideoDisplayMode.FitHeight);
-                                setShowDisplayOptions(undefined);
-                                setShowMore(undefined);
-                            }}>
-                            Fit height
-                        </MenuItem>
-                        <MenuItem
-                            onClick={() => {
-                                setVideoDisplayMode(VideoDisplayMode.OriginalSize);
-                                setShowDisplayOptions(undefined);
-                                setShowMore(undefined);
-                            }}>
-                            Original size
-                        </MenuItem>
-                    </Menu>
+                        <Tooltip title="Settings" arrow>
+                            <IconButton onClick={() => setOpen(true)} size="large">
+                                <SettingsIcon fontSize="large" />
+                            </IconButton>
+                        </Tooltip>
+                    </Box>
                 </Paper>
             )}
 
@@ -361,7 +301,8 @@ export const Room = ({
                                 key={client.id}
                                 elevation={4}
                                 className={classes.smallVideoContainer}
-                                onClick={() => setSelectedStream(client.id)}>
+                                onClick={() => setSelectedStream(client.id)}
+                            >
                                 <Video
                                     key={client.id}
                                     src={client.stream}
@@ -371,7 +312,8 @@ export const Room = ({
                                     variant="subtitle1"
                                     component="div"
                                     align="center"
-                                    className={classes.smallVideoLabel}>
+                                    className={classes.smallVideoLabel}
+                                >
                                     {state.users.find(({id}) => client.peer_id === id)?.name ??
                                         'unknown'}
                                 </Typography>
@@ -382,52 +324,26 @@ export const Room = ({
                     <Paper
                         elevation={4}
                         className={classes.smallVideoContainer}
-                        onClick={() => setSelectedStream(HostStream)}>
+                        onClick={() => setSelectedStream(HostStream)}
+                    >
                         <Video src={state.hostStream} className={classes.smallVideo} />
                         <Typography
                             variant="subtitle1"
                             component="div"
                             align="center"
-                            className={classes.smallVideoLabel}>
+                            className={classes.smallVideoLabel}
+                        >
                             You
                         </Typography>
                     </Paper>
                 )}
+                <SettingDialog
+                    open={open}
+                    setOpen={setOpen}
+                    updateName={setName}
+                    saveSettings={setSettings}
+                />
             </div>
-
-            <Dialog open={open} onClose={() => setOpen(false)}>
-                <DialogTitle>Change Name</DialogTitle>
-                <DialogContent>
-                    <form onSubmit={submitName}>
-                        <TextField
-                            autoFocus
-                            margin="dense"
-                            label="Username"
-                            value={nameInput}
-                            onChange={(e) => setNameInput(e.target.value)}
-                            fullWidth
-                        />
-
-                        <FormControlLabel
-                            control={
-                                <Checkbox
-                                    checked={permanent}
-                                    onChange={(_, checked) => setPermanent(checked)}
-                                />
-                            }
-                            label="Remember"
-                        />
-                    </form>
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setOpen(false)} color="primary">
-                        Cancel
-                    </Button>
-                    <Button onClick={submitName} color="primary">
-                        Change
-                    </Button>
-                </DialogActions>
-            </Dialog>
         </div>
     );
 };
@@ -462,11 +378,44 @@ const useShowOnMouseMovement = (doShow: (s: boolean) => void) => {
     );
 };
 
-const useStyles = makeStyles((theme: Theme) => ({
+const AudioControl = ({video}: {video: FullScreenHTMLVideoElement}) => {
+    // this is used to force a rerender
+    const [, setMuted] = React.useState<boolean>();
+
+    React.useEffect(() => {
+        const handler = () => setMuted(video.muted);
+        video.addEventListener('volumechange', handler);
+        setMuted(video.muted);
+        return () => video.removeEventListener('volumechange', handler);
+    });
+
+    return (
+        <Stack spacing={0.5} direction="row" sx={{alignItems: 'center', my: 1, height: 35, pr: 2}}>
+            <IconButton size="large" onClick={() => (video.muted = !video.muted)}>
+                {video.muted ? (
+                    <VolumeMuteIcon fontSize="large" />
+                ) : (
+                    <VolumeIcon fontSize="large" />
+                )}
+            </IconButton>
+            <Slider
+                min={0}
+                max={1}
+                step={0.01}
+                defaultValue={video.volume}
+                onChange={(_, newVolume) => {
+                    video.muted = false;
+                    video.volume = newVolume;
+                }}
+            />
+        </Stack>
+    );
+};
+
+const useStyles = makeStyles()(() => ({
     title: {
         padding: 15,
         position: 'fixed',
-        background: theme.palette.background.paper,
         top: '30px',
         left: '50%',
         transform: 'translateX(-50%)',
@@ -482,14 +431,14 @@ const useStyles = makeStyles((theme: Theme) => ({
     control: {
         padding: 15,
         position: 'fixed',
-        background: theme.palette.background.paper,
         bottom: '30px',
         left: '50%',
         transform: 'translateX(-50%)',
         zIndex: 30,
     },
     video: {
-        position: 'absolute',
+        display: 'block',
+        margin: '0 auto',
 
         '&::-webkit-media-controls-start-playback-button': {
             display: 'none!important',
@@ -548,9 +497,5 @@ const useStyles = makeStyles((theme: Theme) => ({
         height: '100%',
 
         overflow: 'auto',
-
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
     },
 }));

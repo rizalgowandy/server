@@ -1,6 +1,7 @@
-import {UIConfig} from './message';
+import {RoomMode, UIConfig} from './message';
 import {useSnackbar} from 'notistack';
 import React from 'react';
+import {urlWithSlash} from './url';
 
 export interface UseConfig extends UIConfig {
     login: (username: string, password: string) => Promise<void>;
@@ -17,11 +18,12 @@ export const useConfig = (): UseConfig => {
         loggedIn: false,
         loading: true,
         version: 'unknown',
+        roomName: 'unknown',
         closeRoomWhenOwnerLeaves: true,
     });
 
     const refetch = React.useCallback(async () => {
-        return fetch(`config`)
+        return fetch(`${urlWithSlash}config`)
             .then((data) => data.json())
             .then(setConfig);
     }, [setConfig]);
@@ -30,7 +32,7 @@ export const useConfig = (): UseConfig => {
         const body = new FormData();
         body.set('user', username);
         body.set('pass', password);
-        const result = await fetch(`login`, {method: 'POST', body});
+        const result = await fetch(`${urlWithSlash}login`, {method: 'POST', body});
         const json = await result.json();
         if (result.status !== 200) {
             enqueueSnackbar('Login Failed: ' + json.message, {variant: 'error'});
@@ -41,7 +43,7 @@ export const useConfig = (): UseConfig => {
     };
 
     const logout = async () => {
-        const result = await fetch(`logout`, {method: 'POST'});
+        const result = await fetch(`${urlWithSlash}logout`, {method: 'POST'});
         if (result.status !== 200) {
             enqueueSnackbar('Logout Failed: ' + (await result.text()), {variant: 'error'});
         } else {
@@ -54,4 +56,19 @@ export const useConfig = (): UseConfig => {
     React.useEffect(() => void refetch(), []);
 
     return {...config, refetch, loading, login, logout};
+};
+
+export const authModeToRoomMode = (authMode: UIConfig['authMode'], loggedIn: boolean): RoomMode => {
+    if (loggedIn) {
+        return RoomMode.Turn;
+    }
+    switch (authMode) {
+        case 'all':
+            return RoomMode.Turn;
+        case 'turn':
+            return RoomMode.Stun;
+        case 'none':
+        default:
+            return RoomMode.Turn;
+    }
 };

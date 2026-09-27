@@ -6,7 +6,6 @@ import (
 
 	"github.com/rs/xid"
 	"github.com/screego/server/config"
-	"github.com/screego/server/util"
 )
 
 func init() {
@@ -20,14 +19,20 @@ type Create struct {
 	Mode              ConnectionMode `json:"mode"`
 	CloseOnOwnerLeave bool           `json:"closeOnOwnerLeave"`
 	UserName          string         `json:"username"`
+	JoinIfExist       bool           `json:"joinIfExist,omitempty"`
 }
 
 func (e *Create) Execute(rooms *Rooms, current ClientInfo) error {
-	if current.RoomID != "" {
+	if rooms.connected[current.ID] != "" {
 		return fmt.Errorf("cannot join room, you are already in one")
 	}
 
 	if _, ok := rooms.Rooms[e.ID]; ok {
+		if e.JoinIfExist {
+			join := &Join{UserName: e.UserName, ID: e.ID}
+			return join.Execute(rooms, current)
+		}
+
 		return fmt.Errorf("room with id %s does already exist", e.ID)
 	}
 
@@ -36,7 +41,7 @@ func (e *Create) Execute(rooms *Rooms, current ClientInfo) error {
 		name = current.AuthenticatedUser
 	}
 	if name == "" {
-		name = util.NewName()
+		name = rooms.RandUserName()
 	}
 
 	switch rooms.config.AuthMode {
@@ -65,11 +70,11 @@ func (e *Create) Execute(rooms *Rooms, current ClientInfo) error {
 				Streaming: false,
 				Owner:     true,
 				Addr:      current.Addr,
-				Write:     current.Write,
-				Close:     current.Close,
+				_write:    current.Write,
 			},
 		},
 	}
+	rooms.connected[current.ID] = room.ID
 	rooms.Rooms[e.ID] = room
 	room.notifyInfoChanged()
 	usersJoinedTotal.Inc()

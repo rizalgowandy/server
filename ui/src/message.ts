@@ -10,6 +10,7 @@ export interface UIConfig {
     user: string;
     loggedIn: boolean;
     version: string;
+    roomName: string;
     closeRoomWhenOwnerLeaves: boolean;
 }
 
@@ -79,7 +80,7 @@ export type HostOffer = Typed<P2PMessage<RTCSessionDescriptionInit>, 'hostoffer'
 export type ClientAnswer = Typed<P2PMessage<RTCSessionDescriptionInit>, 'clientanswer'>;
 export type StartSharing = Typed<{}, 'share'>;
 export type StopShare = Typed<{}, 'stopshare'>;
-export type RoomCreate = Typed<RoomConfiguration, 'create'>;
+export type RoomCreate = Typed<RoomConfiguration & {joinIfExist?: boolean}, 'create'>;
 export type JoinRoom = Typed<JoinConfiguration, 'join'>;
 export type EndShare = Typed<string, 'endshare'>;
 

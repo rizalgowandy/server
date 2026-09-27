@@ -1,36 +1,50 @@
 import React from 'react';
-import ReactDOM from 'react-dom';
+import ReactDOM from 'react-dom/client';
 import './global.css';
-import {Button, createMuiTheme, CssBaseline, MuiThemeProvider} from '@material-ui/core';
+import {Button, createTheme, CssBaseline, ThemeProvider, StyledEngineProvider} from '@mui/material';
 import {Router} from './Router';
 import {SnackbarProvider} from 'notistack';
 
-const theme = createMuiTheme({
-    overrides: {
-        MuiSelect: {icon: {position: 'relative'}},
+const theme = createTheme({
+    components: {
+        MuiSelect: {
+            styleOverrides: {
+                icon: {position: 'relative'},
+            },
+        },
         MuiLink: {
-            root: {
-                color: '#458588',
+            styleOverrides: {
+                root: {
+                    color: '#458588',
+                },
             },
         },
         MuiIconButton: {
-            root: {
-                color: 'inherit',
+            styleOverrides: {
+                root: {
+                    color: 'inherit',
+                },
             },
         },
         MuiListItemIcon: {
-            root: {
-                color: 'inherit',
+            styleOverrides: {
+                root: {
+                    color: 'inherit',
+                },
             },
         },
         MuiToolbar: {
-            root: {
-                background: '#a89984',
+            styleOverrides: {
+                root: {
+                    background: '#a89984',
+                },
             },
         },
         MuiTooltip: {
-            tooltip: {
-                fontSize: '1.6em',
+            styleOverrides: {
+                tooltip: {
+                    fontSize: '1.6em',
+                },
             },
         },
     },
@@ -48,11 +62,11 @@ const theme = createMuiTheme({
         secondary: {
             main: '#f44336',
         },
-        type: 'dark',
+        mode: 'dark',
     },
 });
 
-const Snackbar: React.FC = ({children}) => {
+const Snackbar: React.FC<React.PropsWithChildren> = ({children}) => {
     const notistackRef = React.createRef<any>();
     const onClickDismiss = (key: unknown) => () => {
         notistackRef.current?.closeSnackbar(key);
@@ -66,20 +80,20 @@ const Snackbar: React.FC = ({children}) => {
                 <Button onClick={onClickDismiss(key)} size="small">
                     Dismiss
                 </Button>
-            )}>
+            )}
+        >
             {children}
         </SnackbarProvider>
     );
 };
 
-ReactDOM.render(
-    <React.StrictMode>
-        <MuiThemeProvider theme={theme}>
+ReactDOM.createRoot(document.getElementById('root')!!).render(
+    <StyledEngineProvider injectFirst>
+        <ThemeProvider theme={theme}>
             <Snackbar>
                 <CssBaseline />
                 <Router />
             </Snackbar>
-        </MuiThemeProvider>
-    </React.StrictMode>,
-    document.getElementById('root')
+        </ThemeProvider>
+    </StyledEngineProvider>
 );

@@ -11,10 +11,7 @@
 <p align="center">
     <a href="https://github.com/screego/server/actions?query=workflow%3Abuild">
         <img alt="Build Status" src="https://github.com/screego/server/workflows/build/badge.svg">
-    </a>
-    <a href="https://goreportcard.com/report/github.com/screego/server">
-        <img alt="Go Report Card" src="https://goreportcard.com/badge/github.com/screego/server">
-    </a>
+    </a> 
     <a href="https://hub.docker.com/r/screego/server">
         <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/screego/server.svg">
     </a>
@@ -22,8 +19,6 @@
         <img alt="latest release" src="https://img.shields.io/github/release/screego/server.svg">
     </a>
 </p>
-
-<p align="center">Huge thanks to <a href="https://www.sipgate.de/"><b>sipgate</b><a> for sponsoring this project!</p>
 
 ## Intro
 

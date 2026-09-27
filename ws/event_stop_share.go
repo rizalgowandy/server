@@ -2,7 +2,6 @@ package ws
 
 import (
 	"bytes"
-	"fmt"
 
 	"github.com/screego/server/ws/outgoing"
 )
@@ -13,17 +12,12 @@ func init() {
 	})
 }
 
-type StopShare struct {
-}
+type StopShare struct{}
 
 func (e *StopShare) Execute(rooms *Rooms, current ClientInfo) error {
-	if current.RoomID == "" {
-		return fmt.Errorf("not in a room")
-	}
-
-	room, ok := rooms.Rooms[current.RoomID]
-	if !ok {
-		return fmt.Errorf("room with id %s does not exist", current.RoomID)
+	room, err := rooms.CurrentRoom(current)
+	if err != nil {
+		return err
 	}
 
 	room.Users[current.ID].Streaming = false
@@ -31,7 +25,7 @@ func (e *StopShare) Execute(rooms *Rooms, current ClientInfo) error {
 		if bytes.Equal(session.Host.Bytes(), current.ID.Bytes()) {
 			client, ok := room.Users[session.Client]
 			if ok {
-				client.Write <- outgoing.EndShare(id)
+				client.WriteTimeout(outgoing.EndShare(id))
 			}
 			room.closeSession(rooms, id)
 		}

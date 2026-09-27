@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"net"
 	"sort"
+	"time"
 
 	"github.com/rs/xid"
+	"github.com/rs/zerolog/log"
 	"github.com/screego/server/config"
 	"github.com/screego/server/ws/outgoing"
 )
@@ -31,7 +33,7 @@ const (
 	CloseDone      = "Read End"
 )
 
-func (r *Room) newSession(host, client xid.ID, rooms *Rooms) {
+func (r *Room) newSession(host, client xid.ID, rooms *Rooms, v4, v6 net.IP) {
 	id := xid.New()
 	r.Sessions[id] = &RoomSession{
 		Host:   host,
@@ -44,38 +46,37 @@ func (r *Room) newSession(host, client xid.ID, rooms *Rooms) {
 	switch r.Mode {
 	case ConnectionLocal:
 	case ConnectionSTUN:
-		iceHost = []outgoing.ICEServer{{URLs: rooms.addresses("stun", false)}}
-		iceClient = []outgoing.ICEServer{{URLs: rooms.addresses("stun", false)}}
+		iceHost = []outgoing.ICEServer{{URLs: rooms.addresses("stun", v4, v6, false)}}
+		iceClient = []outgoing.ICEServer{{URLs: rooms.addresses("stun", v4, v6, false)}}
 	case ConnectionTURN:
 		hostName, hostPW := rooms.turnServer.Credentials(id.String()+"host", r.Users[host].Addr)
 		clientName, clientPW := rooms.turnServer.Credentials(id.String()+"client", r.Users[client].Addr)
 		iceHost = []outgoing.ICEServer{{
-			URLs:       rooms.addresses("turn", true),
+			URLs:       rooms.addresses("turn", v4, v6, true),
 			Credential: hostPW,
 			Username:   hostName,
 		}}
 		iceClient = []outgoing.ICEServer{{
-			URLs:       rooms.addresses("turn", true),
+			URLs:       rooms.addresses("turn", v4, v6, true),
 			Credential: clientPW,
 			Username:   clientName,
 		}}
-
 	}
-	r.Users[host].Write <- outgoing.HostSession{Peer: client, ID: id, ICEServers: iceHost}
-	r.Users[client].Write <- outgoing.ClientSession{Peer: host, ID: id, ICEServers: iceClient}
+	r.Users[host].WriteTimeout(outgoing.HostSession{Peer: client, ID: id, ICEServers: iceHost})
+	r.Users[client].WriteTimeout(outgoing.ClientSession{Peer: host, ID: id, ICEServers: iceClient})
 }
 
-func (r *Rooms) addresses(prefix string, tcp bool) (result []string) {
-	if r.config.TurnIPV4 != nil {
-		result = append(result, fmt.Sprintf("%s:%s:%s", prefix, r.config.TurnIPV4.String(), r.config.TurnPort))
+func (r *Rooms) addresses(prefix string, v4, v6 net.IP, tcp bool) (result []string) {
+	if v4 != nil {
+		result = append(result, fmt.Sprintf("%s:%s:%s", prefix, v4.String(), r.config.TurnPort))
 		if tcp {
-			result = append(result, fmt.Sprintf("%s:%s:%s?transport=tcp", prefix, r.config.TurnIPV4.String(), r.config.TurnPort))
+			result = append(result, fmt.Sprintf("%s:%s:%s?transport=tcp", prefix, v4.String(), r.config.TurnPort))
 		}
 	}
-	if r.config.TurnIPV6 != nil {
-		result = append(result, fmt.Sprintf("%s:[%s]:%s", prefix, r.config.TurnIPV6.String(), r.config.TurnPort))
+	if v6 != nil {
+		result = append(result, fmt.Sprintf("%s:[%s]:%s", prefix, v6.String(), r.config.TurnPort))
 		if tcp {
-			result = append(result, fmt.Sprintf("%s:[%s]:%s?transport=tcp", prefix, r.config.TurnIPV6.String(), r.config.TurnPort))
+			result = append(result, fmt.Sprintf("%s:[%s]:%s?transport=tcp", prefix, v6.String(), r.config.TurnPort))
 		}
 	}
 	return
@@ -123,10 +124,10 @@ func (r *Room) notifyInfoChanged() {
 			return left.Name < right.Name
 		})
 
-		current.Write <- outgoing.Room{
+		current.WriteTimeout(outgoing.Room{
 			ID:    r.ID,
 			Users: users,
-		}
+		})
 	}
 }
 
@@ -136,6 +137,17 @@ type User struct {
 	Name      string
 	Streaming bool
 	Owner     bool
-	Write     chan<- outgoing.Message
-	Close     chan<- string
+	_write    chan<- outgoing.Message
+}
+
+func (u *User) WriteTimeout(msg outgoing.Message) {
+	writeTimeout(u._write, msg)
+}
+
+func writeTimeout[T any](ch chan<- T, msg T) {
+	select {
+	case <-time.After(2 * time.Second):
+		log.Warn().Interface("event", fmt.Sprintf("%T", msg)).Interface("payload", msg).Msg("Client write loop didn't accept the message.")
+	case ch <- msg:
+	}
 }

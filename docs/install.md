@@ -2,7 +2,7 @@
 
 Latest Version: **GITHUB_VERSION**
 
-?> Before starting Screego you may read [Configuration](config.md).
+Before starting Screego you may read [Configuration](config.md).
 
 !> TLS is required for Screego to work. Either enable TLS inside Screego or 
    use a reverse proxy to serve Screego via TLS.
@@ -11,85 +11,80 @@ Latest Version: **GITHUB_VERSION**
 
 Setting up Screego with docker is pretty easy, you basically just have to start the docker container, and you are ready to go:
 
-The [screego/server](https://hub.docker.com/r/screego/server) docker images are multi-arch docker images. 
-This means the image will work for `amd64`, `i386`, `ppc64le` (power pc), `arm64`, `arm v7` (Raspberry PI).
-
-When using [TURN](nat-traversal.md), Screego will allocate ports for relay connections.
-
-The ports must be mapped that the host system forwards them to the screego container.
+[ghcr.io/screego/server](https://github.com/orgs/screego/packages/container/package/server) and
+[screego/server](https://hub.docker.com/r/screego/server)
+docker images are multi-arch docker images.
+This means the image will work for `amd64`, `i386`, `ppc64le` (power pc), `riscv64`, `arm64`, `armv7` (Raspberry PI) and `armv6`.
 
 By default, Screego runs on port 5050.
 
-?> Replace `YOUREXTERNALIP` with your external IP. One way to find your external ip is with ipify.
-   ```bash
-   $ curl 'https://api.ipify.org'
-   ```
-
-### Network Host (recommended)
+?> Replace `EXTERNALIP` with your external IP. One way to find your external ip is with ipify.
+   `curl 'https://api.ipify.org'`
 
 ```bash
-$ docker run --net=host -e SCREEGO_EXTERNAL_IP=YOUREXTERNALIP screego/server:GITHUB_VERSION
+$ docker run --net=host -e SCREEGO_EXTERNAL_IP=EXTERNALIP ghcr.io/screego/server:GITHUB_VERSION
 ```
 
-#### docker-compose.yml
-
+**docker-compose.yml**
 ```yaml
-version: "3.7"
 services:
   screego:
-    image: screego/server:GITHUB_VERSION
+    image: ghcr.io/screego/server:GITHUB_VERSION
     network_mode: host
     environment:
-      SCREEGO_EXTERNAL_IP: "YOUREXTERNALIP"
+      SCREEGO_EXTERNAL_IP: "EXTERNALIP"
 ```
 
-### Port Range
+If you don't want to use the host network, then you can configure docker like this:
 
-`SCREEGO_TURN_STRICT_AUTH` should only be disabled if you enable TLS inside
-Screego and not use a reverse proxy with `SCREEGO_TRUST_PROXY_HEADERS=true`.
+<details><summary>(Click to expand)</summary>
+<p>
 
+!> Screego may not work correctly when deploying it in docker without `network_mode: host`.
+   See [#226](https://github.com/screego/server/issues/226)
 
 ```bash
-$ docker run \
-    -e SCREEGO_TURN_PORT_RANGE=50000:50100 \
-    -e SCREEGO_TURN_STRICT_AUTH=false \
-    -e SCREEGO_EXTERNAL_IP=YOUREXTERNALIP \
+$ docker run -it \
+    -e SCREEGO_EXTERNAL_IP=EXTERNALIP \
+    -e SCREEGO_TURN_PORT_RANGE=50000:50200 \
     -p 5050:5050 \
     -p 3478:3478 \
-    -p 50000-50100:50000-50100/udp \
+    -p 50000-50200:50000-50200/udp \
     screego/server:GITHUB_VERSION
 ```
 
 #### docker-compose.yml
 
-```yaml
+```yml
 version: "3.7"
 services:
   screego:
-    image: screego/server:GITHUB_VERSION
+    image: ghcr.io/screego/server:GITHUB_VERSION
     ports:
       - 5050:5050
       - 3478:3478
-      - 50000-50100:50000-50100/udp
+      - 50000-50200:50000-50200/udp
     environment:
-      SCREEGO_TURN_PORT_RANGE: "50000:50100"
-      SCREEGO_EXTERNAL_IP: "YOUREXTERNALIP"
-      SCREEGO_TURN_STRICT_AUTH: "false"
+      SCREEGO_EXTERNAL_IP: "192.168.178.2"
+      SCREEGO_TURN_PORT_RANGE: "50000:50200"
 ```
+
+</p>
+</details>
 
 ## Binary
 
 ### Supported Platforms:
 
-* linux_amd64 (64bit)
-* linux_i386 (32bit)
-* armv7 (32bit used for Raspberry Pi)
-* armv6
-* arm64 (ARMv8)
-* ppc64
-* ppc64le
-* windows_i386.exe (32bit)
-* windows_amd64.exe (64bit)
+- linux_amd64 (64bit)
+- linux_i386 (32bit)
+- armv7 (32bit used for Raspberry Pi)
+- armv6
+- arm64 (ARMv8)
+- ppc64
+- ppc64le
+- windows_i386.exe (32bit)
+- windows_amd64.exe (64bit)
 
 Download the zip with the binary for your platform from [screego/server Releases](https://github.com/screego/server/releases).
 

@@ -1,38 +1,44 @@
 package ui
 
 import (
-	"fmt"
+	"embed"
+	"io"
+	"io/fs"
 	"net/http"
 
-	"github.com/gobuffalo/packr/v2"
 	"github.com/gorilla/mux"
+	"github.com/rs/zerolog/log"
 )
 
-var box = packr.New("ui", "build/")
+//go:embed build
+var buildFiles embed.FS
+var files, _ = fs.Sub(buildFiles, "build")
 
 // Register registers the ui on the root path.
 func Register(r *mux.Router) {
-	r.Handle("/", serveFile("index.html", "text/html", box))
-	r.Handle("/index.html", serveFile("index.html", "text/html", box))
-	r.Handle("/manifest.json", serveFile("manifest.json", "application/json", box))
-	r.Handle("/service-worker.js", serveFile("service-worker.js", "text/javascript", box))
-	r.Handle("/assets-manifest.json", serveFile("asserts-manifest.json", "application/json", box))
-	r.Handle("/static/{type}/{resource}", http.FileServer(box))
+	r.Handle("/", serveFile("index.html", "text/html"))
+	r.Handle("/index.html", serveFile("index.html", "text/html"))
+	r.Handle("/assets/{resource}", http.FileServer(http.FS(files)))
 
-	r.Handle("/favicon.ico", serveFile("favicon.ico", "image/x-icon", box))
-	for _, size := range []string{"16x16", "32x32", "192x192", "256x256"} {
-		fileName := fmt.Sprintf("/favicon-%s.png", size)
-		r.Handle(fileName, serveFile(fileName, "image/png", box))
-	}
+	r.Handle("/favicon.ico", serveFile("favicon.ico", "image/x-icon"))
+	r.Handle("/logo.svg", serveFile("logo.svg", "image/svg+xml"))
+	r.Handle("/apple-touch-icon.png", serveFile("apple-touch-icon.png", "image/png"))
+	r.Handle("/og-banner.png", serveFile("og-banner.png", "image/png"))
 }
 
-func serveFile(name, contentType string, box *packr.Box) http.HandlerFunc {
+func serveFile(name, contentType string) http.HandlerFunc {
+	file, err := files.Open(name)
+	if err != nil {
+		log.Panic().Err(err).Msgf("could not find %s", file)
+	}
+	defer file.Close()
+	content, err := io.ReadAll(file)
+	if err != nil {
+		log.Panic().Err(err).Msgf("could not read %s", file)
+	}
+
 	return func(writer http.ResponseWriter, reg *http.Request) {
 		writer.Header().Set("Content-Type", contentType)
-		content, err := box.Find(name)
-		if err != nil {
-			panic(err)
-		}
 		_, _ = writer.Write(content)
 	}
 }

@@ -9,9 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pion/turn/v2"
+	"github.com/pion/turn/v4"
 	"github.com/rs/zerolog/log"
 	"github.com/screego/server/config"
+	"github.com/screego/server/config/ipdns"
 	"github.com/screego/server/util"
 )
 
@@ -21,9 +22,8 @@ type Server interface {
 }
 
 type InternalServer struct {
-	lock       sync.RWMutex
-	strictAuth bool
-	lookup     map[string]Entry
+	lock   sync.RWMutex
+	lookup map[string]Entry
 }
 
 type ExternalServer struct {
@@ -39,9 +39,8 @@ type Entry struct {
 const Realm = "screego"
 
 type Generator struct {
-	ipv4 net.IP
-	ipv6 net.IP
 	turn.RelayAddressGenerator
+	IPProvider ipdns.Provider
 }
 
 func (r *Generator) AllocatePacketConn(network string, requestedPort int) (net.PacketConn, net.Addr, error) {
@@ -50,10 +49,16 @@ func (r *Generator) AllocatePacketConn(network string, requestedPort int) (net.P
 		return conn, addr, err
 	}
 	relayAddr := *addr.(*net.UDPAddr)
-	if r.ipv6 == nil || (relayAddr.IP.To4() != nil && r.ipv4 != nil) {
-		relayAddr.IP = r.ipv4
+
+	v4, v6, err := r.IPProvider.Get()
+	if err != nil {
+		return conn, addr, err
+	}
+
+	if v6 == nil || (relayAddr.IP.To4() != nil && v4 != nil) {
+		relayAddr.IP = v4
 	} else {
-		relayAddr.IP = r.ipv6
+		relayAddr.IP = v6
 	}
 	if err == nil {
 		log.Debug().Str("addr", addr.String()).Str("relayaddr", relayAddr.String()).Msg("TURN allocated")
@@ -86,25 +91,31 @@ func newInternalServer(conf config.Config) (Server, error) {
 		return nil, fmt.Errorf("tcp: could not listen on %s: %s", conf.TurnAddress, err)
 	}
 
-	svr := &InternalServer{
-		lookup:     map[string]Entry{},
-		strictAuth: conf.TurnStrictAuth,
-	}
+	svr := &InternalServer{lookup: map[string]Entry{}}
 
 	gen := &Generator{
-		ipv4:                  conf.TurnIPV4,
-		ipv6:                  conf.TurnIPV6,
 		RelayAddressGenerator: generator(conf),
+		IPProvider:            conf.TurnIPProvider,
+	}
+
+	var permissions turn.PermissionHandler = func(clientAddr net.Addr, peerIP net.IP) bool {
+		for _, cidr := range conf.TurnDenyPeersParsed {
+			if cidr.Contains(peerIP) {
+				return false
+			}
+		}
+
+		return true
 	}
 
 	_, err = turn.NewServer(turn.ServerConfig{
 		Realm:       Realm,
 		AuthHandler: svr.authenticate,
 		ListenerConfigs: []turn.ListenerConfig{
-			{Listener: tcpListener, RelayAddressGenerator: gen},
+			{Listener: tcpListener, RelayAddressGenerator: gen, PermissionHandler: permissions},
 		},
 		PacketConnConfigs: []turn.PacketConnConfig{
-			{PacketConn: udpListener, RelayAddressGenerator: gen},
+			{PacketConn: udpListener, RelayAddressGenerator: gen, PermissionHandler: permissions},
 		},
 	})
 	if err != nil {
@@ -148,27 +159,10 @@ func (a *InternalServer) authenticate(username, realm string, addr net.Addr) ([]
 	a.lock.RLock()
 	defer a.lock.RUnlock()
 
-	var connectedIp net.IP
-	switch addr := addr.(type) {
-	case *net.UDPAddr:
-		connectedIp = addr.IP
-	case *net.TCPAddr:
-		connectedIp = addr.IP
-	default:
-		log.Error().Interface("type", fmt.Sprintf("%T", addr)).Msg("unknown addr type")
-		return nil, false
-	}
 	entry, ok := a.lookup[username]
 
 	if !ok {
 		log.Debug().Interface("addr", addr).Str("username", username).Msg("TURN username not found")
-		return nil, false
-	}
-
-	authIP := entry.addr
-
-	if a.strictAuth && !connectedIp.Equal(authIP) {
-		log.Debug().Interface("allowedIp", addr.String()).Interface("connectingIp", entry.addr.String()).Msg("TURN strict auth check failed")
 		return nil, false
 	}
 

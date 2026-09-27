@@ -10,35 +10,16 @@ import {
     TextField,
     Typography,
     Link,
-} from '@material-ui/core';
+} from '@mui/material';
 import {FCreateRoom, UseRoom} from './useRoom';
-import {RoomMode, UIConfig} from './message';
-import {randomRoomName} from './name';
+import {UIConfig} from './message';
 import {getRoomFromURL} from './useRoomID';
-import logo from './logo.svg';
-import {UseConfig} from './useConfig';
+import {authModeToRoomMode, UseConfig} from './useConfig';
 import {LoginForm} from './LoginForm';
 
-const defaultMode = (authMode: UIConfig['authMode'], loggedIn: boolean): RoomMode => {
-    if (loggedIn) {
-        return RoomMode.Turn;
-    }
-    switch (authMode) {
-        case 'all':
-            return RoomMode.Turn;
-        case 'turn':
-            return RoomMode.Stun;
-        case 'none':
-        default:
-            return RoomMode.Turn;
-    }
-};
-
 const CreateRoom = ({room, config}: Pick<UseRoom, 'room'> & {config: UIConfig}) => {
-    const [id, setId] = React.useState(
-        () => getRoomFromURL(window.location.search) ?? randomRoomName()
-    );
-    const mode = defaultMode(config.authMode, config.loggedIn);
+    const [id, setId] = React.useState(() => getRoomFromURL() ?? config.roomName);
+    const mode = authModeToRoomMode(config.authMode, config.loggedIn);
     const [ownerLeave, setOwnerLeave] = React.useState(config.closeRoomWhenOwnerLeaves);
     const submit = () =>
         room({
@@ -46,6 +27,7 @@ const CreateRoom = ({room, config}: Pick<UseRoom, 'room'> & {config: UIConfig}) 
             payload: {
                 mode,
                 closeOnOwnerLeave: ownerLeave,
+                joinIfExist: true,
                 id: id || undefined,
             },
         });
@@ -68,19 +50,20 @@ const CreateRoom = ({room, config}: Pick<UseRoom, 'room'> & {config: UIConfig}) 
                     }
                     label="Close Room after you leave"
                 />
-                <Box paddingBottom={0.5}>
+                <Box sx={{paddingBottom: 0.5}}>
                     <Typography>
                         Nat Traversal via:{' '}
                         <Link
                             href="https://screego.net/#/nat-traversal"
                             target="_blank"
-                            rel="noreferrer">
+                            rel="noreferrer"
+                        >
                             {mode.toUpperCase()}
                         </Link>
                     </Typography>
                 </Box>
                 <Button onClick={submit} fullWidth variant="contained">
-                    Create Room
+                    Create or Join a Room
                 </Button>
             </FormControl>
         </div>
@@ -96,12 +79,13 @@ export const RoomManage = ({room, config}: {room: FCreateRoom; config: UseConfig
     return (
         <Grid
             container={true}
-            justify="center"
+            sx={{justifyContent: 'center'}}
             style={{paddingTop: 50, maxWidth: 400, width: '100%', margin: '0 auto'}}
-            spacing={4}>
-            <Grid item xs={12}>
+            spacing={4}
+        >
+            <Grid size={12}>
                 <Typography align="center" gutterBottom>
-                    <img src={logo} style={{width: 230}} alt="logo" />
+                    <img src="./logo.svg" style={{width: 230}} alt="logo" />
                 </Typography>
                 <Paper elevation={3} style={{padding: 20}}>
                     {loginVisible ? (
@@ -121,7 +105,8 @@ export const RoomManage = ({room, config}: {room: FCreateRoom; config: UseConfig
                                     <Button
                                         variant="outlined"
                                         size="small"
-                                        onClick={() => setShowLogin(true)}>
+                                        onClick={() => setShowLogin(true)}
+                                    >
                                         Login
                                     </Button>
                                 )}
